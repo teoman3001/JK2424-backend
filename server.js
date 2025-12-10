@@ -1,97 +1,99 @@
-// ===============================
-// JK2424 BACKEND - FINAL WORKING VERSION
-// ===============================
-
-const express = require("express");
-const cors = require("cors");
-const fetch = require("node-fetch");
-const path = require("path");
-require("dotenv").config();
+import express from "express";
+import cors from "cors";
+import axios from "axios";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ---- GOOGLE API KEY ----
-const GOOGLE_KEY = process.env.GOOGLE_API_KEY;
+// Render otomatik bu PORT'u kullanır
+const PORT = process.env.PORT || 3000;
 
-// ---- PRICING ----
-const pricing = {
-    baseFare: 65,
-    includedMiles: 15,
-    extraPerMile: 2,
-    nightMultiplier: 1.25
-};
+// Google API Key
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-// ---- TIME HELPER ----
-function isNight(time, period) {
-    let [h] = time.split(":").map(Number);
-    if (period === "PM" && h !== 12) h += 12;
-    if (period === "AM" && h === 12) h = 0;
-    return h >= 22 || h < 6;
+if (!GOOGLE_MAPS_API_KEY) {
+  console.error("ERROR: GOOGLE_MAPS_API_KEY environment variable is missing!");
 }
 
-// ---- DISTANCE MATRIX ----
-app.get("/api/calc", async (req, res) => {
-    try {
-        const { pickup, dropoff, extra, date, time, period } = req.query;
+// GOOGLE MAPS DISTANCE CALCULATION
+app.get("/api/calc-price", async (req, res) => {
+  try {
+    const { pickup, extra_stop, dropoff } = req.query;
 
-        const origins = pickup;
-        let destinations = dropoff;
-        if (extra && extra.length > 2) destinations = extra + "|" + dropoff;
-
-        const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(
-            origins
-        )}&destinations=${encodeURIComponent(destinations)}&key=${GOOGLE_KEY}`;
-
-        const response = await fetch(url);
-        const data = await response.json();
-
-        if (!data.rows || !data.rows[0].elements[0].distance) {
-            return res.json({ ok: false, message: "Distance not found" });
-        }
-
-        const meters = data.rows[0].elements.reduce(
-            (acc, el) => acc + (el.distance?.value || 0),
-            0
-        );
-
-        const miles = meters / 1609.34;
-
-        let total = pricing.baseFare;
-        if (miles > pricing.includedMiles) {
-            total += (miles - pricing.includedMiles) * pricing.extraPerMile;
-        }
-
-        if (isNight(time, period)) {
-            total = total * pricing.nightMultiplier;
-        }
-
-        total = Math.round(total);
-
-        res.json({
-            ok: true,
-            distance: miles.toFixed(2),
-            total
-        });
-    } catch (err) {
-        res.json({ ok: false, error: err.message });
-    }
-});
-
-// ---- RESERVATION ----
-app.post("/api/reserve", async (req, res) => {
-    const { pickup, dropoff, date, time, fullname, phone, email } = req.body;
-
-    if (!pickup || !dropoff || !fullname) {
-        return res.json({ ok: false, message: "Missing fields" });
+    if (!pickup || !dropoff) {
+      return res.status(400).json({
+        error: "pickup and dropoff fields are required"
+      });
     }
 
-    res.json({ ok: true, message: "Reservation stored successfully!" });
+    // Build route
+    const waypoints = extra_stop ? `&waypoints=${encodeURIComponent(extra_stop)}` : "";
+
+    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(
+      pickup
+    )}&destination=${encodeURIComponent(dropoff)}${waypoints}&key=${GOOGLE_MAPS_API_KEY}`;
+
+    const response = await axios.get(url);
+    const data = response.data;
+
+    if (!data.routes || data.routes.length === 0) {
+      return res.status(404).json({ error: "No route found" });
+    }
+
+    const route = data.routes[0];
+    const leg = route.legs.reduce(
+      (acc, l) => {
+        acc.distance += l.distance.value;
+        acc.duration += l.duration.value;
+        return acc;
+      },
+      { distance: 0, duration: 0 }
+    );
+
+    const km = leg.distance / 1000;
+
+    // YOUR PRICING LOGIC
+    let price = 25 + km * 2.1;
+
+    res.json({
+      distance_km: km.toFixed(2),
+      duration_min: Math.round(leg.duration / 60),
+      price: price.toFixed(2)
+    });
+  } catch (error) {
+    console.error("PRICE CALC ERROR:", error.response?.data || error);
+    res.status(500).json({
+      error: "Price calculation failed",
+      details: error.response?.data || error.toString()
+    });
+  }
 });
 
-// ---- START SERVER ----
-const PORT = process.env.PORT || 3001;
+// RESERVATION ENDPOINT (Step 2 form)
+app.post("/api/bookings2", async (req, res) => {
+  try {
+    const booking = req.body;
+
+    console.log("YENI BOOKING:", booking);
+
+    // Response to frontend
+    return res.json({
+      success: true,
+      message: "Booking received",
+      data: booking
+    });
+  } catch (error) {
+    console.error("BOOKING ERROR:", error);
+    res.status(500).json({ error: "Booking creation failed" });
+  }
+});
+
+// ROOT TEST
+app.get("/", (req, res) => {
+  res.send("JK2424 Backend API is running...");
+});
+
 app.listen(PORT, () => {
-    console.log("JK2424 BACKEND running on " + PORT);
+  console.log(`Server running on port ${PORT}`);
 });
