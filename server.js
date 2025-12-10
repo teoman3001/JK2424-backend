@@ -1,113 +1,94 @@
-/**
- * JK2424 FINAL SERVER — Render Backend
- */
-
 const express = require("express");
-const fetch = require("node-fetch");
 const cors = require("cors");
-const app = express();
+const fetch = require("node-fetch");
+require("dotenv").config();
 
+const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// GOOGLE API KEY
-const GOOGLE_API_KEY = "AIzaSyCgnDJwKDpN2fWL5NCDCd44kunvC89_4-8";
+// ===============================
+// PRICE SETTINGS (EDITABLE)
+// ===============================
+const BASE_RATE = 3.5;    // Price per mile
+const MIN_FARE = 25;      // Minimum charge
 
-// PRICING (Varsayılan)
-let pricing = {
-  baseFare: 65,
-  includedMiles: 15,
-  extraPerMile: 2,
-  nightMultiplier: 1.25,
-  minimumFare: 65,
-};
+// GOOGLE API KEY (Backend için)
+const GOOGLE_KEY = process.env.GOOGLE_MAPS_KEY;
 
-// ADMIN PANEL → GET PRICING
-app.get("/api/admin/pricing", (req, res) => {
-  res.json({ ok: true, settings: pricing });
-});
+// ===============================
+// DISTANCE CALCULATOR
+// ===============================
+async function calculateDistance(pickup, dropoff, extra) {
+    let url = `https://maps.googleapis.com/maps/api/distancematrix/json?units=imperial&origins=${encodeURIComponent(
+        pickup
+    )}&destinations=${encodeURIComponent(dropoff)}&key=${GOOGLE_KEY}`;
 
-// ADMIN PANEL → SAVE PRICING
-app.post("/api/admin/pricing", (req, res) => {
-  pricing = { ...pricing, ...req.body };
-  console.log("NEW PRICING:", pricing);
-  res.json({ ok: true });
-});
+    if (extra && extra.trim() !== "") {
+        url = `https://maps.googleapis.com/maps/api/distancematrix/json?units=imperial&origins=${encodeURIComponent(
+            pickup
+        )}&destinations=${encodeURIComponent(extra)}|${encodeURIComponent(
+            dropoff
+        )}&key=${GOOGLE_KEY}`;
+    }
 
-// GOOGLE DISTANCE API
-async function getDistance(pickup, stop, dropoff) {
-  let url = `https://maps.googleapis.com/maps/api/distancematrix/json?units=imperial&origins=${encodeURIComponent(
-    pickup
-  )}&destinations=`;
+    const response = await fetch(url);
+    const data = await response.json();
 
-  if (stop) {
-    url += `${encodeURIComponent(stop)}|`;
-  }
+    if (!data.rows || !data.rows[0].elements) return null;
 
-  url += `${encodeURIComponent(dropoff)}&key=${GOOGLE_API_KEY}`;
+    let totalMiles = 0;
+    data.rows[0].elements.forEach((el) => {
+        if (el.distance) {
+            totalMiles += el.distance.value / 1609.34; // meters → miles
+        }
+    });
 
-  const response = await fetch(url);
-  const data = await response.json();
-
-  if (!data.rows || !data.rows[0] || !data.rows[0].elements[0]) {
-    return null;
-  }
-
-  return data.rows[0].elements.map((el) =>
-    el.distance ? el.distance.value / 1609.34 : 0
-  );
+    return totalMiles;
 }
 
-// PRICE CALCULATOR API
-app.get("/api/calc-price", async (req, res) => {
-  try {
-    const { pickup, stop, dropoff, time, ampm } = req.query;
+// ===============================
+// /api/calc → PRICE CALCULATION
+// ===============================
+app.get("/api/calc", async (req, res) => {
+    try {
+        const { pickup, dropoff, extra } = req.query;
 
-    const milesArr = await getDistance(pickup, stop, dropoff);
-    if (!milesArr) return res.json({ error: "Distance not found" });
+        if (!pickup || !dropoff)
+            return res.status(400).json({ error: "Missing locations" });
 
-    let totalMiles = milesArr.reduce((a, b) => a + b, 0);
+        const miles = await calculateDistance(pickup, dropoff, extra);
 
-    // Extra miles
-    const extraMiles = Math.max(0, totalMiles - pricing.includedMiles);
+        if (!miles)
+            return res.status(500).json({ error: "Distance failed" });
 
-    // Base subtotal
-    let total = pricing.baseFare + extraMiles * pricing.extraPerMile;
+        const total = Math.max(MIN_FARE, miles * BASE_RATE);
 
-    // Night multiplier
-    if (time && ampm) {
-      const [hh, mm] = time.split(":");
-      let h = parseInt(hh);
-      if (ampm === "PM" && h !== 12) h += 12;
-      if (ampm === "AM" && h === 12) h = 0;
-
-      const minutes = h * 60 + parseInt(mm);
-
-      if (minutes >= 22 * 60 || minutes < 5 * 60) {
-        total *= pricing.nightMultiplier;
-      }
+        res.json({
+            distance: miles.toFixed(2) + " miles",
+            total: total.toFixed(2),
+        });
+    } catch (err) {
+        console.log("CALC ERROR:", err);
+        res.status(500).json({ error: "Server error" });
     }
-
-    if (total < pricing.minimumFare) {
-      total = pricing.minimumFare;
-    }
-
-    res.json({
-      ok: true,
-      miles: totalMiles.toFixed(2),
-      total: total.toFixed(2),
-      pricing,
-    });
-  } catch (err) {
-    console.error(err);
-    res.json({ error: "Server error during calculation" });
-  }
 });
 
-// SAVE RESERVATION
+// ===============================
+// /api/reserve → SAVE RESERVATION
+// ===============================
 app.post("/api/reserve", (req, res) => {
-  console.log("New reservation:", req.body);
-  res.json({ ok: true, message: "Reservation received" });
+    const reservation = req.body;
+    console.log("New reservation:", reservation);
+
+    res.json({ message: "Reservation successful" });
 });
 
-app.listen(3000, () => console.log("JK2424 Backend running PORT 3000"));
+// ===============================
+// START SERVER
+// ===============================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log("JK2424 Backend running on port " + PORT);
+});
