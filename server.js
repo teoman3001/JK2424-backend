@@ -9,9 +9,17 @@ app.use(cors());
 app.use(express.json());
 
 // ===================================================
-// FAZ 1 — In-memory store (ileride DB’ye taşınacak)
+// FAZ 2.2 — In-memory stores (ileride DB)
 // ===================================================
+let customers = []; // basit üyelik
 let bookings = [];
+
+// ===================================================
+// HELPERS
+// ===================================================
+function normalizePhone(phone) {
+  return phone.replace(/\D/g, ""); // sadece rakam
+}
 
 // ===================================================
 // HEALTH CHECK
@@ -21,16 +29,13 @@ app.get("/", (req, res) => {
 });
 
 // ===================================================
-// PRICE CALCULATION (dummy – FAZ 1)
+// PRICE CALCULATION (dummy)
 // ===================================================
 app.get("/calc", (req, res) => {
-  const { pickup, stop, dropoff } = req.query;
+  const { pickup, dropoff } = req.query;
 
   if (!pickup || !dropoff) {
-    return res.json({
-      success: false,
-      error: "Missing pickup or dropoff"
-    });
+    return res.json({ success: false, error: "Missing pickup or dropoff" });
   }
 
   res.json({
@@ -41,7 +46,7 @@ app.get("/calc", (req, res) => {
 });
 
 // ===================================================
-// CREATE BOOKING (Customer)
+// CREATE BOOKING + AUTO CUSTOMER (Basit Üyelik)
 // ===================================================
 app.post("/bookings", (req, res) => {
   const {
@@ -59,30 +64,54 @@ app.post("/bookings", (req, res) => {
     notes
   } = req.body;
 
-  if (!pickup || !dropoff || !customerName || !customerPhone || !customerEmail) {
+  if (!pickup || !dropoff || !customerName || !customerPhone) {
     return res.status(400).json({
       success: false,
       message: "Missing required fields"
     });
   }
 
+  const phoneKey = normalizePhone(customerPhone);
+
+  // -------------------------------
+  // FIND OR CREATE CUSTOMER
+  // -------------------------------
+  let customer = customers.find(c => c.phone === phoneKey);
+
+  if (!customer) {
+    customer = {
+      id: crypto.randomUUID(),
+      name: customerName,
+      phone: phoneKey,
+      email: customerEmail || "",
+      createdAt: new Date().toISOString()
+    };
+    customers.push(customer);
+    console.log("👤 New customer created:", phoneKey);
+  }
+
+  // -------------------------------
+  // CREATE BOOKING
+  // -------------------------------
   const booking = {
     id: crypto.randomUUID(),
 
+    // relation
+    customerId: customer.id,
+
+    // trip
     pickup,
     stop,
     dropoff,
-
     rideDate,
     rideTime,
     ampm,
 
+    // pricing
     miles,
     total,
 
-    customerName,
-    customerPhone,
-    customerEmail,
+    // meta
     notes: notes || "",
 
     status: "pending",
@@ -93,11 +122,12 @@ app.post("/bookings", (req, res) => {
 
   bookings.unshift(booking);
 
-  console.log("📥 New booking created:", booking.id);
+  console.log("📥 New booking:", booking.id, "for customer", phoneKey);
 
   res.status(201).json({
     success: true,
-    booking
+    bookingId: booking.id,
+    customerId: customer.id
   });
 });
 
@@ -105,14 +135,24 @@ app.post("/bookings", (req, res) => {
 // LIST BOOKINGS (Admin)
 // ===================================================
 app.get("/bookings", (req, res) => {
+  const enriched = bookings.map(b => {
+    const c = customers.find(x => x.id === b.customerId) || {};
+    return {
+      ...b,
+      customerName: c.name,
+      customerPhone: c.phone,
+      customerEmail: c.email
+    };
+  });
+
   res.json({
     success: true,
-    bookings
+    bookings: enriched
   });
 });
 
 // ===================================================
-// GET SINGLE BOOKING (ileride mobil deep-link için)
+// GET SINGLE BOOKING (Customer tracking)
 // ===================================================
 app.get("/bookings/:id", (req, res) => {
   const booking = bookings.find(b => b.id === req.params.id);
@@ -124,20 +164,25 @@ app.get("/bookings/:id", (req, res) => {
     });
   }
 
+  const customer = customers.find(c => c.id === booking.customerId) || {};
+
   res.json({
     success: true,
-    booking
+    booking: {
+      ...booking,
+      customerName: customer.name,
+      customerPhone: customer.phone
+    }
   });
 });
 
 // ===================================================
-// UPDATE STATUS (Admin → trigger notifications later)
+// UPDATE STATUS (Admin → future push trigger)
 // ===================================================
 app.patch("/bookings/:id/status", (req, res) => {
-  const { id } = req.params;
   const { status } = req.body;
 
-  const allowedStatuses = [
+  const allowed = [
     "pending",
     "confirmed",
     "paid",
@@ -147,33 +192,32 @@ app.patch("/bookings/:id/status", (req, res) => {
     "completed"
   ];
 
-  if (!allowedStatuses.includes(status)) {
+  if (!allowed.includes(status)) {
     return res.status(400).json({
       success: false,
       message: "Invalid status"
     });
   }
 
-  const index = bookings.findIndex(b => b.id === id);
-
-  if (index === -1) {
+  const idx = bookings.findIndex(b => b.id === req.params.id);
+  if (idx === -1) {
     return res.status(404).json({
       success: false,
       message: "Booking not found"
     });
   }
 
-  bookings[index].status = status;
-  bookings[index].updatedAt = new Date().toISOString();
+  bookings[idx].status = status;
+  bookings[idx].updatedAt = new Date().toISOString();
 
-  console.log("🔁 Status updated:", id, "→", status);
+  console.log("🔁 Status updated:", bookings[idx].id, "→", status);
 
-  // ⏭️ FAZ 2:
-  // burada push notification, SMS, live tracking tetiklenecek
+  // FAZ 3:
+  // push / sms / websocket burada tetiklenecek
 
   res.json({
     success: true,
-    booking: bookings[index]
+    booking: bookings[idx]
   });
 });
 
