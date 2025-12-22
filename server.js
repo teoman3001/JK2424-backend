@@ -34,6 +34,58 @@ app.get("/calc", (req, res) => {
   });
 });
 
+// ✅ NEW: BOOKING ENDPOINT
+app.post("/bookings", (req, res) => {
+  const {
+    pickup,
+    stop,
+    dropoff,
+    rideDate,
+    rideTime,
+    ampm,
+    miles,
+    total,
+    customerName,
+    customerPhone,
+    customerEmail,
+    notes
+  } = req.body;
+
+  // Basit validation
+  if (!pickup || !dropoff || !customerName || !customerPhone || !customerEmail) {
+    return res.status(400).json({
+      success: false,
+      message: "Missing required booking fields"
+    });
+  }
+
+  // ŞİMDİLİK sadece logluyoruz (bir sonraki adım DB)
+  const booking = {
+    pickup,
+    stop,
+    dropoff,
+    rideDate,
+    rideTime,
+    ampm,
+    miles,
+    total,
+    customerName,
+    customerPhone,
+    customerEmail,
+    notes,
+    status: "pending",
+    createdAt: new Date().toISOString()
+  };
+
+  console.log("📥 New booking received:", booking);
+
+  res.status(201).json({
+    success: true,
+    message: "Booking received",
+    booking
+  });
+});
+
 app.listen(PORT, () => {
   console.log("Server running on port", PORT);
 });
