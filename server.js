@@ -11,14 +11,14 @@ app.use(express.json());
 // ===================================================
 // FAZ 2.2 — In-memory stores (ileride DB)
 // ===================================================
-let customers = []; // basit üyelik
+let customers = []; 
 let bookings = [];
 
 // ===================================================
 // HELPERS
 // ===================================================
 function normalizePhone(phone) {
-  return phone.replace(/\D/g, ""); // sadece rakam
+  return phone.replace(/\D/g, ""); 
 }
 
 // ===================================================
@@ -73,11 +73,8 @@ app.post("/bookings", (req, res) => {
 
   const phoneKey = normalizePhone(customerPhone);
 
-  // -------------------------------
   // FIND OR CREATE CUSTOMER
-  // -------------------------------
   let customer = customers.find(c => c.phone === phoneKey);
-
   if (!customer) {
     customer = {
       id: crypto.randomUUID(),
@@ -87,40 +84,32 @@ app.post("/bookings", (req, res) => {
       createdAt: new Date().toISOString()
     };
     customers.push(customer);
-    console.log("👤 New customer created:", phoneKey);
   }
 
-  // -------------------------------
   // CREATE BOOKING
-  // -------------------------------
   const booking = {
     id: crypto.randomUUID(),
-
     customerId: customer.id,
-
     pickup,
     stop,
     dropoff,
     rideDate,
     rideTime,
     ampm,
-
     miles,
     total,
-
     notes: notes || "",
-
     status: "pending",
-
     createdAt: new Date().toISOString(),
     updatedAt: null
   };
 
   bookings.unshift(booking);
 
-  console.log("📥 New booking:", booking.id, "for customer", phoneKey);
+  console.log("📥 New booking created:", booking.id);
 
-  // ✅ FRONTEND İLE %100 UYUMLU RESPONSE
+  // ✅ KRİTİK DÜZELTME: Frontend'in (index.html) "data.booking.id" olarak 
+  // okuyabilmesi için response formatı güncellendi.
   res.status(201).json({
     success: true,
     booking: {
@@ -180,30 +169,15 @@ app.get("/bookings/:id", (req, res) => {
 // ===================================================
 app.patch("/bookings/:id/status", (req, res) => {
   const { status } = req.body;
-
-  const allowed = [
-    "pending",
-    "confirmed",
-    "paid",
-    "on_the_way",
-    "arrived",
-    "in_progress",
-    "completed"
-  ];
+  const allowed = ["pending", "confirmed", "paid", "on_the_way", "arrived", "in_progress", "completed"];
 
   if (!allowed.includes(status)) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid status"
-    });
+    return res.status(400).json({ success: false, message: "Invalid status" });
   }
 
   const idx = bookings.findIndex(b => b.id === req.params.id);
   if (idx === -1) {
-    return res.status(404).json({
-      success: false,
-      message: "Booking not found"
-    });
+    return res.status(404).json({ success: false, message: "Booking not found" });
   }
 
   bookings[idx].status = status;
@@ -217,7 +191,6 @@ app.patch("/bookings/:id/status", (req, res) => {
   });
 });
 
-// ===================================================
 app.listen(PORT, () => {
   console.log("🚀 Server running on port", PORT);
 });
