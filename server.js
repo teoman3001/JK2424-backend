@@ -46,7 +46,7 @@ app.get("/calc", (req, res) => {
 });
 
 // ===================================================
-// CREATE BOOKING + AUTO CUSTOMER (Basit Üyelik)
+// CREATE BOOKING + AUTO CUSTOMER
 // ===================================================
 app.post("/bookings", (req, res) => {
   const {
@@ -96,10 +96,8 @@ app.post("/bookings", (req, res) => {
   const booking = {
     id: crypto.randomUUID(),
 
-    // relation
     customerId: customer.id,
 
-    // trip
     pickup,
     stop,
     dropoff,
@@ -107,11 +105,9 @@ app.post("/bookings", (req, res) => {
     rideTime,
     ampm,
 
-    // pricing
     miles,
     total,
 
-    // meta
     notes: notes || "",
 
     status: "pending",
@@ -124,10 +120,13 @@ app.post("/bookings", (req, res) => {
 
   console.log("📥 New booking:", booking.id, "for customer", phoneKey);
 
+  // ✅ FRONTEND İLE %100 UYUMLU RESPONSE
   res.status(201).json({
     success: true,
-    bookingId: booking.id,
-    customerId: customer.id
+    booking: {
+      id: booking.id,
+      status: booking.status
+    }
   });
 });
 
@@ -177,7 +176,7 @@ app.get("/bookings/:id", (req, res) => {
 });
 
 // ===================================================
-// UPDATE STATUS (Admin → future push trigger)
+// UPDATE STATUS (Admin)
 // ===================================================
 app.patch("/bookings/:id/status", (req, res) => {
   const { status } = req.body;
@@ -211,9 +210,6 @@ app.patch("/bookings/:id/status", (req, res) => {
   bookings[idx].updatedAt = new Date().toISOString();
 
   console.log("🔁 Status updated:", bookings[idx].id, "→", status);
-
-  // FAZ 3:
-  // push / sms / websocket burada tetiklenecek
 
   res.json({
     success: true,
