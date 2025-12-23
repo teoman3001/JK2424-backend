@@ -9,27 +9,27 @@ app.use(cors());
 app.use(express.json());
 
 // ===================================================
-// FAZ 2.2 — In-memory stores (ileride DB)
+// VERİ DEPOLAMA (In-memory)
 // ===================================================
 let customers = []; 
 let bookings = [];
 
 // ===================================================
-// HELPERS
+// YARDIMCI FONKSİYONLAR
 // ===================================================
 function normalizePhone(phone) {
   return phone.replace(/\D/g, ""); 
 }
 
 // ===================================================
-// HEALTH CHECK
+// ANA SAYFA (Health Check)
 // ===================================================
 app.get("/", (req, res) => {
   res.send("JK2424 Backend is running");
 });
 
 // ===================================================
-// PRICE CALCULATION (dummy)
+// FİYAT HESAPLAMA (Geçici Sabit Değerler)
 // ===================================================
 app.get("/calc", (req, res) => {
   const { pickup, dropoff } = req.query;
@@ -38,30 +38,27 @@ app.get("/calc", (req, res) => {
     return res.json({ success: false, error: "Missing pickup or dropoff" });
   }
 
+  // Şu an için sabit değer dönüyor, Google Maps entegrasyonu buraya yapılacak
   res.json({
     success: true,
     miles: 25,
-    price: 95
+    pricing: {
+        baseFare: 65,
+        includedMiles: 15,
+        extraPerMile: 2,
+        nightMultiplier: 1.25,
+        minimumFare: 65
+    }
   });
 });
 
 // ===================================================
-// CREATE BOOKING + AUTO CUSTOMER
+// REZERVASYON OLUŞTURMA (POST /bookings)
 // ===================================================
 app.post("/bookings", (req, res) => {
   const {
-    pickup,
-    stop,
-    dropoff,
-    rideDate,
-    rideTime,
-    ampm,
-    miles,
-    total,
-    customerName,
-    customerPhone,
-    customerEmail,
-    notes
+    pickup, stop, dropoff, rideDate, rideTime, ampm,
+    miles, total, customerName, customerPhone, customerEmail, notes
   } = req.body;
 
   if (!pickup || !dropoff || !customerName || !customerPhone) {
@@ -73,7 +70,7 @@ app.post("/bookings", (req, res) => {
 
   const phoneKey = normalizePhone(customerPhone);
 
-  // FIND OR CREATE CUSTOMER
+  // MÜŞTERİ KAYDI VEYA BULMA
   let customer = customers.find(c => c.phone === phoneKey);
   if (!customer) {
     customer = {
@@ -86,7 +83,7 @@ app.post("/bookings", (req, res) => {
     customers.push(customer);
   }
 
-  // CREATE BOOKING
+  // REZERVASYON KAYDI
   const booking = {
     id: crypto.randomUUID(),
     customerId: customer.id,
@@ -108,39 +105,24 @@ app.post("/bookings", (req, res) => {
 
   console.log("📥 New booking created:", booking.id);
 
-  // ✅ KRİTİK DÜZELTME: Frontend'in (index.html) "data.booking.id" olarak 
-  // okuyabilmesi için response formatı güncellendi.
+  // ✅ ADIM 2.1 GÜNCELLEMESİ: Frontend (index.html) için birebir uyumlu response
   res.status(201).json({
     success: true,
     booking: {
       id: booking.id,
-      status: booking.status
+      status: booking.status,
+      pickup: booking.pickup,
+      dropoff: booking.dropoff,
+      rideDate: booking.rideDate,
+      rideTime: booking.rideTime,
+      ampm: booking.ampm,
+      total: booking.total
     }
   });
 });
 
 // ===================================================
-// LIST BOOKINGS (Admin)
-// ===================================================
-app.get("/bookings", (req, res) => {
-  const enriched = bookings.map(b => {
-    const c = customers.find(x => x.id === b.customerId) || {};
-    return {
-      ...b,
-      customerName: c.name,
-      customerPhone: c.phone,
-      customerEmail: c.email
-    };
-  });
-
-  res.json({
-    success: true,
-    bookings: enriched
-  });
-});
-
-// ===================================================
-// GET SINGLE BOOKING (Customer tracking)
+// TEKİL REZERVASYON SORGULAMA (track.html için)
 // ===================================================
 app.get("/bookings/:id", (req, res) => {
   const booking = bookings.find(b => b.id === req.params.id);
@@ -165,32 +147,28 @@ app.get("/bookings/:id", (req, res) => {
 });
 
 // ===================================================
-// UPDATE STATUS (Admin)
+// LİSTELEME VE DURUM GÜNCELLEME (Admin için)
 // ===================================================
+app.get("/bookings", (req, res) => {
+  const enriched = bookings.map(b => {
+    const c = customers.find(x => x.id === b.customerId) || {};
+    return { ...b, customerName: c.name, customerPhone: c.phone };
+  });
+  res.json({ success: true, bookings: enriched });
+});
+
 app.patch("/bookings/:id/status", (req, res) => {
   const { status } = req.body;
-  const allowed = ["pending", "confirmed", "paid", "on_the_way", "arrived", "in_progress", "completed"];
-
-  if (!allowed.includes(status)) {
-    return res.status(400).json({ success: false, message: "Invalid status" });
-  }
-
   const idx = bookings.findIndex(b => b.id === req.params.id);
-  if (idx === -1) {
-    return res.status(404).json({ success: false, message: "Booking not found" });
+  
+  if (idx !== -1) {
+    bookings[idx].status = status;
+    bookings[idx].updatedAt = new Date().toISOString();
+    return res.json({ success: true, booking: bookings[idx] });
   }
-
-  bookings[idx].status = status;
-  bookings[idx].updatedAt = new Date().toISOString();
-
-  console.log("🔁 Status updated:", bookings[idx].id, "→", status);
-
-  res.json({
-    success: true,
-    booking: bookings[idx]
-  });
+  res.status(404).json({ success: false, message: "Not found" });
 });
 
 app.listen(PORT, () => {
-  console.log("🚀 Server running on port", PORT);
+  console.log("🚀 JK2424 Server running on port", PORT);
 });
