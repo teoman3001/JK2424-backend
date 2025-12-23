@@ -8,7 +8,9 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// 1. PRICING SETTINGS
+// ===================================================
+// 1. PRICING SETTINGS (Admin’den değiştirilebilir)
+// ===================================================
 let pricingSettings = {
   baseFare: 65,
   includedMiles: 8,
@@ -20,9 +22,11 @@ let pricingSettings = {
 let customers = []; 
 let bookings = [];
 
-function normalizePhone(phone) { return phone.replace(/\D/g, ""); }
+function normalizePhone(phone) {
+  return phone.replace(/\D/g, ""); 
+}
 
-// 2. FİYAT HESAPLAMA MOTORU
+// Yeni: Fiyat Hesaplama Motoru (Şeffaf detaylar eklendi)
 function calculatePrice(miles, isNight) {
   const base = pricingSettings.baseFare;
   const included = pricingSettings.includedMiles;
@@ -30,9 +34,13 @@ function calculatePrice(miles, isNight) {
 
   let extraMiles = Math.max(0, miles - included);
   let extraCost = extraMiles * extraRate;
+
   let subtotal = base + extraCost;
 
-  if (isNight) subtotal = subtotal * pricingSettings.nightMultiplier;
+  if (isNight) {
+    subtotal = subtotal * pricingSettings.nightMultiplier;
+  }
+
   const total = Math.max(subtotal, pricingSettings.minimumFare);
 
   return {
@@ -41,49 +49,96 @@ function calculatePrice(miles, isNight) {
     includedMiles: included,
     extraMiles: Number(extraMiles.toFixed(2)),
     extraCost: Number(extraCost.toFixed(2)),
+    extraRate: extraRate, // Frontend'e gönderilen şeffaf oran
     nightApplied: isNight,
     nightMultiplier: pricingSettings.nightMultiplier,
     total: Number(total.toFixed(2))
   };
 }
 
-// 3. /calc ENDPOINT (Google Distance Matrix ile gerçek mil)
+// ===================================================
+// ANA SAYFA
+// ===================================================
+app.get("/", (req, res) => {
+  res.send("JK2424 Backend - Pricing Engine v1.2 (Transparent) is running");
+});
+
+// ===================================================
+// 2. /calc ENDPOINT (Google Distance Matrix Bağlantısı)
+// ===================================================
 app.get("/calc", async (req, res) => {
   try {
     const { pickup, stop, dropoff, isNight } = req.query;
-    if (!pickup || !dropoff) return res.json({ success: false, error: "Missing pickup or dropoff" });
 
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY; // Render'daki Key
-    
-    // Google Matrix sorgusu
+    if (!pickup || !dropoff) {
+      return res.json({ success: false, error: "Missing pickup or dropoff" });
+    }
+
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ success: false, error: "Missing API KEY on server" });
+    }
+
     async function getMiles(origin, destination) {
       const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(destination)}&units=imperial&key=${apiKey}`;
       const r = await fetch(url);
       const j = await r.json();
-      if (j.status !== "OK") throw new Error("API Error");
+      if (j.status !== "OK") throw new Error("DistanceMatrix status not OK");
       const meters = j.rows?.[0]?.elements?.[0]?.distance?.value;
+      if (!meters) throw new Error("No route found");
       return meters / 1609.344;
     }
 
     let miles = 0;
     if (stop && stop.trim().length > 0) {
-      miles = (await getMiles(pickup, stop)) + (await getMiles(stop, dropoff));
+      const m1 = await getMiles(pickup, stop);
+      const m2 = await getMiles(stop, dropoff);
+      miles = m1 + m2;
     } else {
       miles = await getMiles(pickup, dropoff);
     }
 
     const pricing = calculatePrice(miles, isNight === "true");
-    res.json({ success: true, pricing });
+
+    res.json({
+      success: true,
+      pricing
+    });
   } catch (e) {
-    res.status(500).json({ success: false, error: "Calculation failed" });
+    res.status(500).json({ success: false, error: e.message || "Calc failed" });
   }
 });
 
-// Diğer endpoint'lerin (bookings, status) aynı kalabilir.
+// ===================================================
+// 3. PRICING SETTINGS (Admin)
+// ===================================================
+app.get("/pricing", (req, res) => {
+  res.json({ success: true, pricingSettings });
+});
+
+app.post("/pricing", (req, res) => {
+  const { baseFare, includedMiles, extraPerMile, nightMultiplier, minimumFare } = req.body;
+  pricingSettings = {
+    baseFare: Number(baseFare),
+    includedMiles: Number(includedMiles),
+    extraPerMile: Number(extraPerMile),
+    nightMultiplier: Number(nightMultiplier),
+    minimumFare: Number(minimumFare)
+  };
+  res.json({ success: true, pricingSettings });
+});
+
+// ===================================================
+// 4. BOOKINGS & STATUS (Diğer Fonksiyonlar)
+// ===================================================
 app.post("/bookings", (req, res) => {
   const booking = { id: crypto.randomUUID(), ...req.body, status: "pending", createdAt: new Date().toISOString() };
   bookings.unshift(booking);
   res.status(201).json({ success: true, booking });
+});
+
+app.get("/bookings", (req, res) => {
+  res.json({ success: true, bookings });
 });
 
 app.get("/bookings/:id", (req, res) => {
@@ -91,4 +146,15 @@ app.get("/bookings/:id", (req, res) => {
   res.json({ success: true, booking: b });
 });
 
-app.listen(PORT, () => console.log("JK2424 Online"));
+app.patch("/bookings/:id/status", (req, res) => {
+  const idx = bookings.findIndex(b => b.id === req.params.id);
+  if (idx !== -1) {
+    bookings[idx].status = req.body.status;
+    return res.json({ success: true });
+  }
+  res.status(404).json({ success: false });
+});
+
+app.listen(PORT, () => {
+  console.log("🚀 JK2424 Server (v1.2) running on port", PORT);
+});
