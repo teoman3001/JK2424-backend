@@ -9,7 +9,7 @@ app.use(cors());
 app.use(express.json());
 
 // ===================================================
-// 1. PRICING SETTINGS (Admin’den değiştirilebilir)
+// 1. PRICING SETTINGS
 // ===================================================
 let pricingSettings = {
   baseFare: 65,
@@ -20,7 +20,7 @@ let pricingSettings = {
 };
 
 // ===================================================
-// 2. STATUS LIFECYCLE (Uber-level Mantıksal Akış)
+// 2. STATUS LIFECYCLE & FLOW CONTROL
 // ===================================================
 const STATUS_FLOW = {
   pending: ["confirmed", "cancelled"],
@@ -34,24 +34,18 @@ const STATUS_FLOW = {
   cancelled: []
 };
 
-// VERİ DEPOLAMA (In-memory)
 let customers = []; 
 let bookings = [];
 
-function normalizePhone(phone) {
-  return phone.replace(/\D/g, ""); 
-}
+function normalizePhone(phone) { return phone.replace(/\D/g, ""); }
 
-// Fiyat Hesaplama Motoru
 function calculatePrice(miles, isNight) {
   const base = pricingSettings.baseFare;
   const included = pricingSettings.includedMiles;
   const extraRate = pricingSettings.extraPerMile;
-
   let extraMiles = Math.max(0, miles - included);
   let extraCost = extraMiles * extraRate;
   let subtotal = base + extraCost;
-
   if (isNight) subtotal = subtotal * pricingSettings.nightMultiplier;
   const total = Math.max(subtotal, pricingSettings.minimumFare);
 
@@ -69,54 +63,50 @@ function calculatePrice(miles, isNight) {
 }
 
 // ===================================================
-// ENDPOINTLER
+// ENDPOINTS
 // ===================================================
 
-app.get("/", (req, res) => {
-  res.send("JK2424 Backend - Lifecycle v1.8 is active");
-});
+app.get("/", (req, res) => res.send("JK2424 Backend - Uber Lifecycle v1.9 Active"));
 
-// /calc - Google Distance Matrix & Pricing
 app.get("/calc", async (req, res) => {
   try {
     const { pickup, stop, dropoff, isNight } = req.query;
-    if (!pickup || !dropoff) return res.json({ success: false, error: "Missing pickup/dropoff" });
-
     const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-    
     async function getMiles(origin, destination) {
       const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(destination)}&units=imperial&key=${apiKey}`;
       const r = await fetch(url);
       const j = await r.json();
-      if (j.status !== "OK") throw new Error("API Error");
       const meters = j.rows?.[0]?.elements?.[0]?.distance?.value;
       return meters / 1609.344;
     }
-
-    let miles = 0;
-    if (stop && stop.trim().length > 0) {
-      miles = (await getMiles(pickup, stop)) + (await getMiles(stop, dropoff));
-    } else {
-      miles = await getMiles(pickup, dropoff);
-    }
-
-    const pricing = calculatePrice(miles, isNight === "true");
-    res.json({ success: true, pricing });
-  } catch (e) {
-    res.status(500).json({ success: false, error: "Calculation failed" });
-  }
+    let miles = (stop && stop.trim().length > 0) ? (await getMiles(pickup, stop)) + (await getMiles(stop, dropoff)) : await getMiles(pickup, dropoff);
+    res.json({ success: true, pricing: calculatePrice(miles, isNight === "true") });
+  } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// Admin Pricing Endpoints
 app.get("/pricing", (req, res) => res.json({ success: true, pricingSettings }));
-app.post("/pricing", (req, res) => {
-  pricingSettings = { ...req.body };
-  res.json({ success: true, pricingSettings });
-});
+app.post("/pricing", (req, res) => { pricingSettings = { ...req.body }; res.json({ success: true }); });
 
-// Bookings
+// 3. BOOKING OLUŞTURMA (Genişletilmiş History Yapısı)
 app.post("/bookings", (req, res) => {
-  const booking = { id: crypto.randomUUID(), ...req.body, status: "pending", createdAt: new Date().toISOString() };
+  const now = new Date().toISOString();
+  const booking = {
+    id: crypto.randomUUID(),
+    ...req.body,
+    status: "pending",
+    statusHistory: {
+      pending: now,
+      confirmed: null,
+      payment_sent: null,
+      paid: null,
+      on_the_way: null,
+      arrived: null,
+      in_progress: null,
+      completed: null,
+      cancelled: null
+    },
+    createdAt: now
+  };
   bookings.unshift(booking);
   res.status(201).json({ success: true, booking });
 });
@@ -127,35 +117,27 @@ app.get("/bookings/:id", (req, res) => {
   res.json({ success: true, booking: b });
 });
 
-// ===================================================
-// ✅ YENİ: AKILLI STATUS GÜNCELLEME (PATCH)
-// ===================================================
+// 4. STATUS UPDATE (Zaman Damgası Kontrollü)
 app.patch("/bookings/:id/status", (req, res) => {
   const { status: newStatus } = req.body;
   const idx = bookings.findIndex(b => b.id === req.params.id);
 
-  if (idx === -1) {
-    return res.status(404).json({ success: false, message: "Booking not found" });
-  }
+  if (idx === -1) return res.status(404).json({ success: false });
 
   const currentStatus = bookings[idx].status;
   const allowedNext = STATUS_FLOW[currentStatus] || [];
 
-  // Geçiş kontrolü
   if (!allowedNext.includes(newStatus)) {
-    return res.status(400).json({
-      success: false,
-      message: `Invalid status transition: ${currentStatus} → ${newStatus}`
-    });
+    return res.status(400).json({ success: false, message: `Invalid flow: ${currentStatus} -> ${newStatus}` });
   }
 
+  // Durumu güncelle ve zaman damgasını bas
   bookings[idx].status = newStatus;
-  bookings[idx].updatedAt = new Date().toISOString();
-
-  res.json({
-    success: true,
-    booking: bookings[idx]
-  });
+  if (bookings[idx].statusHistory[newStatus] === null) {
+    bookings[idx].statusHistory[newStatus] = new Date().toISOString();
+  }
+  
+  res.json({ success: true, booking: bookings[idx] });
 });
 
-app.listen(PORT, () => console.log("🚀 JK2424 Server (v1.8) running on port", PORT));
+app.listen(PORT, () => console.log("🚀 JK2424 Server (v1.9) Ready"));
