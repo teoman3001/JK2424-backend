@@ -10,7 +10,6 @@ app.use(express.json());
 
 let pricingSettings = { baseFare: 65, includedMiles: 10, extraPerMile: 2, nightMultiplier: 1.25, minimumFare: 65 };
 
-// ✅ ZİNCİR KIRILDI: Artık katı akış kontrolü yok, dilediğin statüye dilediğin an geçebilirsin.
 let bookings = [];
 
 function calculatePrice(miles, isNight) {
@@ -25,7 +24,6 @@ function calculatePrice(miles, isNight) {
   return { miles: Number(miles.toFixed(2)), nightApplied: isNight, nightMultiplier: pricingSettings.nightMultiplier, total: Number(total.toFixed(2)) };
 }
 
-// FİYAT HESAPLAMA
 app.get("/calc", async (req, res) => {
   try {
     const { pickup, stop, dropoff, isNight } = req.query;
@@ -41,7 +39,6 @@ app.get("/calc", async (req, res) => {
   } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// YENİ REZERVASYON OLUŞTURMA
 app.post("/bookings", (req, res) => {
   const now = new Date().toISOString();
   const booking = {
@@ -54,45 +51,21 @@ app.post("/bookings", (req, res) => {
   res.status(201).json({ success: true, booking });
 });
 
-// REZERVASYONLARI LİSTELEME
 app.get("/bookings", (req, res) => res.json({ success: true, bookings }));
 
-// ✅ ZİNCİRİ KIRAN YENİ BAĞIMSIZ GÜNCELLEME YOLU (POST /update-booking)
-// admin.html içindeki butonlar artık bu yolu kullanacak.
+// BAĞIMSIZ GÜNCELLEME ENDPOINT'İ (404 HATASINI BİTİRİR)
 app.post("/update-booking", (req, res) => {
-    const { id, status: newStatus } = req.body;
+    const { id, status } = req.body;
     const idx = bookings.findIndex(b => b.id === id);
-    
-    if (idx === -1) {
-        return res.status(404).json({ success: false, message: "Booking not found" });
-    }
-
-    // Herhangi bir kurala takılmadan statüyü günceller
-    bookings[idx].status = newStatus;
-    console.log(`[JK2424] Booking ${id} updated to: ${newStatus}`);
-    
-    res.json({ success: true, booking: bookings[idx] });
+    if (idx === -1) return res.status(404).json({ success: false });
+    bookings[idx].status = status;
+    res.json({ success: true });
 });
 
-// MÜŞTERİ PANELİ İÇİN ANLIK DURUM SORGULAMA
 app.get("/booking-status/:id", (req, res) => {
     const booking = bookings.find(b => b.id === req.params.id);
     if (!booking) return res.status(404).json({ success: false });
-    res.json({ 
-        success: true, 
-        status: booking.status, 
-        total: booking.total 
-    });
+    res.json({ success: true, status: booking.status, total: booking.total });
 });
 
-// ESKİ DROP-DOWN SİSTEMİ İÇİN PATCH DESTEĞİ (Hata vermemesi için kuralı gevşettik)
-app.patch("/bookings/:id/status", (req, res) => {
-  const { status: newStatus } = req.body;
-  const idx = bookings.findIndex(b => b.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ success: false });
-  
-  bookings[idx].status = newStatus;
-  res.json({ success: true, booking: bookings[idx] });
-});
-
-app.listen(PORT, () => console.log(`JK2424 Engine Active on Port ${PORT}`));
+app.listen(PORT, () => console.log("JK2424 Engine Active"));
