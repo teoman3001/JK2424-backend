@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Fiyat Ayarları (Default)
+// --- AYARLAR ---
 let pricingSettings = { 
     baseFare: 65, 
     includedMiles: 10, 
@@ -19,18 +19,15 @@ let pricingSettings = {
 
 let bookings = [];
 
-// Fiyat Hesaplama Motoru
+// --- YARDIMCI FONKSİYONLAR ---
 function calculatePrice(miles, isNight) {
   const base = pricingSettings.baseFare;
   const included = pricingSettings.includedMiles;
   const extraRate = pricingSettings.extraPerMile;
-  
   let extraMiles = Math.max(0, miles - included);
   let extraCost = extraMiles * extraRate;
-  
   let subtotal = base + extraCost;
   
-  // Gece tarifesi kontrolü
   if (isNight) {
       subtotal = subtotal * pricingSettings.nightMultiplier;
   }
@@ -47,12 +44,48 @@ function calculatePrice(miles, isNight) {
   };
 }
 
+// Otomatik Mesaj Oluşturucu
+function createSystemMessage(status) {
+    const titles = {
+        confirmed: "Reservation Confirmed",
+        payment_sent: "Payment Verification",
+        paid: "Payment Successful",
+        on_the_way: "Chauffeur on the Way",
+        arrived: "Chauffeur Arrived",
+        in_progress: "Ride in Progress",
+        completed: "Ride Completed",
+        cancelled: "Reservation Cancelled"
+    };
+
+    const bodies = {
+        confirmed: "Your booking has been confirmed by our operations team. Please proceed to payment to finalize your reservation.",
+        payment_sent: "We have received your Zelle notification. Please wait while we verify the transfer.",
+        paid: "Thank you! Your payment has been received and your ride is fully secured.",
+        on_the_way: "Your chauffeur is en route to the pickup location.",
+        arrived: "Your vehicle has arrived. Please meet your chauffeur.",
+        in_progress: "Enjoy your premium ride with JK2424.",
+        completed: "Thank you for riding with JK2424. We hope to see you again.",
+        cancelled: "Your reservation has been cancelled. If this was a mistake, please contact us."
+    };
+
+    if (!titles[status]) return null;
+
+    return {
+        id: crypto.randomUUID(),
+        title: titles[status],
+        body: bodies[status],
+        date: new Date().toISOString(),
+        read: false
+    };
+}
+
 // --- ROTALAR ---
 
+// 1. Hesaplama
 app.get("/calc", async (req, res) => {
   try {
     const { pickup, stop, dropoff, isNight } = req.query;
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY; // Render'da tanımlı olmalı
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
 
     async function getMiles(origin, destination) {
       const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(destination)}&units=imperial&key=${apiKey}`;
@@ -66,41 +99,39 @@ app.get("/calc", async (req, res) => {
         : await getMiles(pickup, dropoff);
 
     res.json({ success: true, pricing: calculatePrice(miles, isNight === "true") });
-  } catch (e) { 
-      console.error(e);
-      res.status(500).json({ success: false }); 
-  }
+  } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// Admin Fiyat Ayarları
+// 2. Fiyat Ayarları
 app.get("/pricing", (req, res) => res.json({ success: true, pricingSettings }));
 app.post("/pricing", (req, res) => {
-    if(req.body.baseFare) pricingSettings.baseFare = Number(req.body.baseFare);
-    if(req.body.includedMiles) pricingSettings.includedMiles = Number(req.body.includedMiles);
-    if(req.body.extraPerMile) pricingSettings.extraPerMile = Number(req.body.extraPerMile);
-    if(req.body.nightMultiplier) pricingSettings.nightMultiplier = Number(req.body.nightMultiplier);
-    if(req.body.minimumFare) pricingSettings.minimumFare = Number(req.body.minimumFare);
+    Object.assign(pricingSettings, req.body); // Pratik güncelleme
     res.json({ success: true, message: "Settings saved" });
 });
 
-// Yeni Rezervasyon
+// 3. Rezervasyon Oluşturma
 app.post("/bookings", (req, res) => {
-  // KURAL: Aynı telefon numarasının 'pending' (onay bekleyen) kaydı varsa ikincisine izin verme
+  // Çifte Rezervasyon Kontrolü
   const existingPending = bookings.find(b => b.customerPhone === req.body.customerPhone && b.status === 'pending');
-  
   if (existingPending) {
-      return res.status(409).json({ 
-          success: false, 
-          message: "You have a pending request waiting for approval. Please wait." 
-      });
+      return res.status(409).json({ success: false, message: "You already have a pending request." });
   }
 
   const now = new Date().toISOString();
+  // İlk mesaj: Talep alındı
+  const initialMsg = {
+      id: crypto.randomUUID(),
+      title: "Request Received",
+      body: "We have received your request. Availability is being checked.",
+      date: now,
+      read: false
+  };
+
   const booking = {
     id: crypto.randomUUID(),
     ...req.body,
     status: "pending",
-    messages: [], 
+    messages: [initialMsg], 
     statusHistory: { pending: now },
     createdAt: now
   };
@@ -108,33 +139,46 @@ app.post("/bookings", (req, res) => {
   res.status(201).json({ success: true, booking });
 });
 
+// 4. Booking Listeleme
 app.get("/bookings", (req, res) => res.json({ success: true, bookings }));
+app.get("/bookings/:id", (req, res) => res.json({ success: true, booking: bookings.find(x => x.id === req.params.id) }));
 
-// Müşteriye Özel Liste (My Trips)
 app.get("/bookings/customer/:phone", (req, res) => {
     const phone = req.params.phone;
-    // En yeniden en eskiye sırala
     const customerBookings = bookings.filter(b => b.customerPhone === phone);
     res.json({ success: true, bookings: customerBookings });
 });
 
-// Tekil Booking Kontrol (Polling için)
-app.get("/bookings/:id", (req, res) => res.json({ success: true, booking: bookings.find(x => x.id === req.params.id) }));
-
-// Statü Güncelleme
+// 5. Statü Güncelleme & Mesaj Tetikleme
 app.patch("/bookings/:id/status", (req, res) => {
   const { status: newStatus } = req.body;
   const idx = bookings.findIndex(b => b.id === req.params.id);
   
   if (idx === -1) return res.status(404).json({ success: false });
   
-  bookings[idx].status = newStatus;
-  
-  if(bookings[idx].statusHistory) {
-      bookings[idx].statusHistory[newStatus] = new Date().toISOString();
+  const b = bookings[idx];
+  b.status = newStatus;
+  if(b.statusHistory) b.statusHistory[newStatus] = new Date().toISOString();
+
+  // Otomatik mesaj ekle
+  const sysMsg = createSystemMessage(newStatus);
+  if(sysMsg) {
+      if(!b.messages) b.messages = [];
+      b.messages.unshift(sysMsg);
   }
   
-  res.json({ success: true, booking: bookings[idx] });
+  res.json({ success: true, booking: b });
 });
 
-app.listen(PORT, () => console.log("JK2424 Premium Engine Active"));
+// 6. Mesajı Okundu İşaretle
+app.patch("/bookings/:id/messages/read", (req, res) => {
+    const { messageId } = req.body;
+    const booking = bookings.find(b => b.id === req.params.id);
+    if(booking && booking.messages) {
+        const msg = booking.messages.find(m => m.id === messageId);
+        if(msg) msg.read = true;
+    }
+    res.json({ success: true });
+});
+
+app.listen(PORT, () => console.log("JK2424 Premium Engine v3.0 Active"));
