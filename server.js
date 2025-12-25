@@ -8,7 +8,6 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Varsayılan fiyat ayarları (Admin panelinden güncellenebilir)
 let pricingSettings = { 
     baseFare: 65, 
     includedMiles: 10, 
@@ -19,23 +18,18 @@ let pricingSettings = {
 
 let bookings = [];
 
-// Fiyat Hesaplama Motoru
 function calculatePrice(miles, isNight) {
   const base = pricingSettings.baseFare;
   const included = pricingSettings.includedMiles;
   const extraRate = pricingSettings.extraPerMile;
-  
   let extraMiles = Math.max(0, miles - included);
   let extraCost = extraMiles * extraRate;
-  
   let subtotal = base + extraCost;
   
-  // Gece tarifesi varsa çarp
   if (isNight) {
       subtotal = subtotal * pricingSettings.nightMultiplier;
   }
   
-  // Minimum tutar kontrolü
   const total = Math.max(subtotal, pricingSettings.minimumFare);
   
   return { 
@@ -48,9 +42,8 @@ function calculatePrice(miles, isNight) {
   };
 }
 
-// --- ROTALAR (ROUTES) ---
+// --- ROTALAR ---
 
-// 1. Fiyat Hesaplama (Frontend'den gelen isNight bilgisine göre)
 app.get("/calc", async (req, res) => {
   try {
     const { pickup, stop, dropoff, isNight } = req.query;
@@ -67,69 +60,63 @@ app.get("/calc", async (req, res) => {
         ? (await getMiles(pickup, stop)) + (await getMiles(stop, dropoff)) 
         : await getMiles(pickup, dropoff);
 
-    // isNight string olarak "true" gelirse true kabul et
     res.json({ success: true, pricing: calculatePrice(miles, isNight === "true") });
-  } catch (e) { 
-      console.error(e);
-      res.status(500).json({ success: false }); 
-  }
+  } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// 2. Fiyat Ayarlarını Okuma (Admin Paneli İçin)
-app.get("/pricing", (req, res) => {
-    res.json({ success: true, pricingSettings });
-});
+app.get("/pricing", (req, res) => res.json({ success: true, pricingSettings }));
 
-// 3. Fiyat Ayarlarını Güncelleme (Admin Paneli İçin - EKSİKTİ EKLENDİ)
 app.post("/pricing", (req, res) => {
     if(req.body.baseFare) pricingSettings.baseFare = Number(req.body.baseFare);
     if(req.body.includedMiles) pricingSettings.includedMiles = Number(req.body.includedMiles);
     if(req.body.extraPerMile) pricingSettings.extraPerMile = Number(req.body.extraPerMile);
     if(req.body.nightMultiplier) pricingSettings.nightMultiplier = Number(req.body.nightMultiplier);
     if(req.body.minimumFare) pricingSettings.minimumFare = Number(req.body.minimumFare);
-    
-    console.log("Pricing Updated:", pricingSettings);
     res.json({ success: true, message: "Settings saved" });
 });
 
-// 4. Rezervasyon Oluşturma
 app.post("/bookings", (req, res) => {
+  // YENİ KURAL: Aynı numaranın 'pending' statüsünde kaydı varsa engelle
+  const existingPending = bookings.find(b => b.customerPhone === req.body.customerPhone && b.status === 'pending');
+  if (existingPending) {
+      return res.status(409).json({ 
+          success: false, 
+          message: "You already have a pending request. Please wait for confirmation." 
+      });
+  }
+
   const now = new Date().toISOString();
   const booking = {
     id: crypto.randomUUID(),
     ...req.body,
     status: "pending",
     messages: [], 
-    statusHistory: { 
-        pending: now, confirmed: null, payment_sent: null, paid: null, 
-        on_the_way: null, arrived: null, in_progress: null, completed: null, cancelled: null 
-    },
+    statusHistory: { pending: now },
     createdAt: now
   };
   bookings.unshift(booking);
   res.status(201).json({ success: true, booking });
 });
 
-// 5. Rezervasyonları Listeleme
 app.get("/bookings", (req, res) => res.json({ success: true, bookings }));
 app.get("/bookings/:id", (req, res) => res.json({ success: true, booking: bookings.find(x => x.id === req.params.id) }));
 
-// 6. Statü Güncelleme (ZİNCİR KALDIRILDI - SERBEST SEÇİM)
+// YENİ ROTA: Müşteriye özel geçmişi çek
+app.get("/bookings/customer/:phone", (req, res) => {
+    const phone = req.params.phone;
+    const customerBookings = bookings.filter(b => b.customerPhone === phone);
+    res.json({ success: true, bookings: customerBookings });
+});
+
 app.patch("/bookings/:id/status", (req, res) => {
   const { status: newStatus } = req.body;
   const idx = bookings.findIndex(b => b.id === req.params.id);
-  
   if (idx === -1) return res.status(404).json({ success: false });
   
-  // Eski kısıtlama kaldırıldı. Her statüye geçiş serbest.
   bookings[idx].status = newStatus;
-  
-  // Tarihçeye işle
-  if(bookings[idx].statusHistory) {
-      bookings[idx].statusHistory[newStatus] = new Date().toISOString();
-  }
+  if(bookings[idx].statusHistory) bookings[idx].statusHistory[newStatus] = new Date().toISOString();
   
   res.json({ success: true, booking: bookings[idx] });
 });
 
-app.listen(PORT, () => console.log("JK2424 Engine Active"));
+app.listen(PORT, () => console.log("JK2424 Engine Active v2.1"));
