@@ -8,7 +8,6 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// --- AYARLAR ---
 let pricingSettings = { 
     baseFare: 65, 
     includedMiles: 10, 
@@ -19,7 +18,6 @@ let pricingSettings = {
 
 let bookings = [];
 
-// --- YARDIMCI FONKSİYONLAR ---
 function calculatePrice(miles, isNight) {
   const base = pricingSettings.baseFare;
   const included = pricingSettings.includedMiles;
@@ -28,9 +26,7 @@ function calculatePrice(miles, isNight) {
   let extraCost = extraMiles * extraRate;
   let subtotal = base + extraCost;
   
-  if (isNight) {
-      subtotal = subtotal * pricingSettings.nightMultiplier;
-  }
+  if (isNight) subtotal = subtotal * pricingSettings.nightMultiplier;
   
   const total = Math.max(subtotal, pricingSettings.minimumFare);
   
@@ -44,28 +40,27 @@ function calculatePrice(miles, isNight) {
   };
 }
 
-// Otomatik Mesaj Oluşturucu
 function createSystemMessage(status) {
     const titles = {
         confirmed: "Reservation Confirmed",
         payment_sent: "Payment Verification",
         paid: "Payment Successful",
-        on_the_way: "Chauffeur on the Way",
+        on_the_way: "Chauffeur En Route",
         arrived: "Chauffeur Arrived",
-        in_progress: "Ride in Progress",
-        completed: "Ride Completed",
+        in_progress: "Trip Started",
+        completed: "Trip Completed",
         cancelled: "Reservation Cancelled"
     };
 
     const bodies = {
-        confirmed: "Your booking has been confirmed by our operations team. Please proceed to payment to finalize your reservation.",
-        payment_sent: "We have received your Zelle notification. Please wait while we verify the transfer.",
-        paid: "Thank you! Your payment has been received and your ride is fully secured.",
-        on_the_way: "Your chauffeur is en route to the pickup location.",
-        arrived: "Your vehicle has arrived. Please meet your chauffeur.",
+        confirmed: "Your reservation is confirmed. Please complete the secure checkout to finalize your booking.",
+        payment_sent: "We have received your transfer notification. Our operations team is verifying the transaction.",
+        paid: "Thank you. Payment verified. Your chauffeur will be assigned shortly.",
+        on_the_way: "Your chauffeur is on the way to the pickup location.",
+        arrived: "Your vehicle has arrived at the pickup point.",
         in_progress: "Enjoy your premium ride with JK2424.",
-        completed: "Thank you for riding with JK2424. We hope to see you again.",
-        cancelled: "Your reservation has been cancelled. If this was a mistake, please contact us."
+        completed: "Thank you for choosing JK2424. We hope to serve you again.",
+        cancelled: "Your reservation has been cancelled."
     };
 
     if (!titles[status]) return null;
@@ -79,9 +74,6 @@ function createSystemMessage(status) {
     };
 }
 
-// --- ROTALAR ---
-
-// 1. Hesaplama
 app.get("/calc", async (req, res) => {
   try {
     const { pickup, stop, dropoff, isNight } = req.query;
@@ -102,23 +94,19 @@ app.get("/calc", async (req, res) => {
   } catch (e) { res.status(500).json({ success: false }); }
 });
 
-// 2. Fiyat Ayarları
 app.get("/pricing", (req, res) => res.json({ success: true, pricingSettings }));
 app.post("/pricing", (req, res) => {
-    Object.assign(pricingSettings, req.body); // Pratik güncelleme
+    Object.assign(pricingSettings, req.body);
     res.json({ success: true, message: "Settings saved" });
 });
 
-// 3. Rezervasyon Oluşturma
 app.post("/bookings", (req, res) => {
-  // Çifte Rezervasyon Kontrolü
   const existingPending = bookings.find(b => b.customerPhone === req.body.customerPhone && b.status === 'pending');
   if (existingPending) {
-      return res.status(409).json({ success: false, message: "You already have a pending request." });
+      return res.status(409).json({ success: false, message: "You have a pending request." });
   }
 
   const now = new Date().toISOString();
-  // İlk mesaj: Talep alındı
   const initialMsg = {
       id: crypto.randomUUID(),
       title: "Request Received",
@@ -139,7 +127,6 @@ app.post("/bookings", (req, res) => {
   res.status(201).json({ success: true, booking });
 });
 
-// 4. Booking Listeleme
 app.get("/bookings", (req, res) => res.json({ success: true, bookings }));
 app.get("/bookings/:id", (req, res) => res.json({ success: true, booking: bookings.find(x => x.id === req.params.id) }));
 
@@ -149,7 +136,6 @@ app.get("/bookings/customer/:phone", (req, res) => {
     res.json({ success: true, bookings: customerBookings });
 });
 
-// 5. Statü Güncelleme & Mesaj Tetikleme
 app.patch("/bookings/:id/status", (req, res) => {
   const { status: newStatus } = req.body;
   const idx = bookings.findIndex(b => b.id === req.params.id);
@@ -160,7 +146,6 @@ app.patch("/bookings/:id/status", (req, res) => {
   b.status = newStatus;
   if(b.statusHistory) b.statusHistory[newStatus] = new Date().toISOString();
 
-  // Otomatik mesaj ekle
   const sysMsg = createSystemMessage(newStatus);
   if(sysMsg) {
       if(!b.messages) b.messages = [];
@@ -170,7 +155,6 @@ app.patch("/bookings/:id/status", (req, res) => {
   res.json({ success: true, booking: b });
 });
 
-// 6. Mesajı Okundu İşaretle
 app.patch("/bookings/:id/messages/read", (req, res) => {
     const { messageId } = req.body;
     const booking = bookings.find(b => b.id === req.params.id);
@@ -181,4 +165,4 @@ app.patch("/bookings/:id/messages/read", (req, res) => {
     res.json({ success: true });
 });
 
-app.listen(PORT, () => console.log("JK2424 Premium Engine v3.0 Active"));
+app.listen(PORT, () => console.log("JK2424 Engine v4.0 Final Night"));
