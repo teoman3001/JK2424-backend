@@ -8,6 +8,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Fiyat Ayarları (Default)
 let pricingSettings = { 
     baseFare: 65, 
     includedMiles: 10, 
@@ -18,14 +19,18 @@ let pricingSettings = {
 
 let bookings = [];
 
+// Fiyat Hesaplama Motoru
 function calculatePrice(miles, isNight) {
   const base = pricingSettings.baseFare;
   const included = pricingSettings.includedMiles;
   const extraRate = pricingSettings.extraPerMile;
+  
   let extraMiles = Math.max(0, miles - included);
   let extraCost = extraMiles * extraRate;
+  
   let subtotal = base + extraCost;
   
+  // Gece tarifesi kontrolü
   if (isNight) {
       subtotal = subtotal * pricingSettings.nightMultiplier;
   }
@@ -47,7 +52,7 @@ function calculatePrice(miles, isNight) {
 app.get("/calc", async (req, res) => {
   try {
     const { pickup, stop, dropoff, isNight } = req.query;
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY; // Render'da tanımlı olmalı
 
     async function getMiles(origin, destination) {
       const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(destination)}&units=imperial&key=${apiKey}`;
@@ -61,11 +66,14 @@ app.get("/calc", async (req, res) => {
         : await getMiles(pickup, dropoff);
 
     res.json({ success: true, pricing: calculatePrice(miles, isNight === "true") });
-  } catch (e) { res.status(500).json({ success: false }); }
+  } catch (e) { 
+      console.error(e);
+      res.status(500).json({ success: false }); 
+  }
 });
 
+// Admin Fiyat Ayarları
 app.get("/pricing", (req, res) => res.json({ success: true, pricingSettings }));
-
 app.post("/pricing", (req, res) => {
     if(req.body.baseFare) pricingSettings.baseFare = Number(req.body.baseFare);
     if(req.body.includedMiles) pricingSettings.includedMiles = Number(req.body.includedMiles);
@@ -75,13 +83,15 @@ app.post("/pricing", (req, res) => {
     res.json({ success: true, message: "Settings saved" });
 });
 
+// Yeni Rezervasyon
 app.post("/bookings", (req, res) => {
-  // YENİ KURAL: Aynı numaranın 'pending' statüsünde kaydı varsa engelle
+  // KURAL: Aynı telefon numarasının 'pending' (onay bekleyen) kaydı varsa ikincisine izin verme
   const existingPending = bookings.find(b => b.customerPhone === req.body.customerPhone && b.status === 'pending');
+  
   if (existingPending) {
       return res.status(409).json({ 
           success: false, 
-          message: "You already have a pending request. Please wait for confirmation." 
+          message: "You have a pending request waiting for approval. Please wait." 
       });
   }
 
@@ -99,24 +109,32 @@ app.post("/bookings", (req, res) => {
 });
 
 app.get("/bookings", (req, res) => res.json({ success: true, bookings }));
-app.get("/bookings/:id", (req, res) => res.json({ success: true, booking: bookings.find(x => x.id === req.params.id) }));
 
-// YENİ ROTA: Müşteriye özel geçmişi çek
+// Müşteriye Özel Liste (My Trips)
 app.get("/bookings/customer/:phone", (req, res) => {
     const phone = req.params.phone;
+    // En yeniden en eskiye sırala
     const customerBookings = bookings.filter(b => b.customerPhone === phone);
     res.json({ success: true, bookings: customerBookings });
 });
 
+// Tekil Booking Kontrol (Polling için)
+app.get("/bookings/:id", (req, res) => res.json({ success: true, booking: bookings.find(x => x.id === req.params.id) }));
+
+// Statü Güncelleme
 app.patch("/bookings/:id/status", (req, res) => {
   const { status: newStatus } = req.body;
   const idx = bookings.findIndex(b => b.id === req.params.id);
+  
   if (idx === -1) return res.status(404).json({ success: false });
   
   bookings[idx].status = newStatus;
-  if(bookings[idx].statusHistory) bookings[idx].statusHistory[newStatus] = new Date().toISOString();
+  
+  if(bookings[idx].statusHistory) {
+      bookings[idx].statusHistory[newStatus] = new Date().toISOString();
+  }
   
   res.json({ success: true, booking: bookings[idx] });
 });
 
-app.listen(PORT, () => console.log("JK2424 Engine Active v2.1"));
+app.listen(PORT, () => console.log("JK2424 Premium Engine Active"));
